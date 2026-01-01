@@ -1,0 +1,18 @@
+{
+  "name": "quiz-app",
+  "version": "1.0.0",
+  "description": "Kahoot-like quiz app with React, TypeScript, Express, and PostgreSQL",
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install"
+  },
+  "keywords": ["quiz", "kahoot", "react", "typescript", "express"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+
