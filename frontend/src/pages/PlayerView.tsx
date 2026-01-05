@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/use-toast'
 import { Trophy, CheckCircle, XCircle, LogOut } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface Question {
   id: number
@@ -23,6 +24,7 @@ export default function PlayerView() {
   const location = useLocation()
   const navigate = useNavigate()
   const playerName = location.state?.playerName || 'Player'
+  const { user } = useAuth()
   const [socket, setSocket] = useState<Socket | null>(null)
   const [connected, setConnected] = useState(false)
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null)
@@ -38,6 +40,7 @@ export default function PlayerView() {
   const [quizStarted, setQuizStarted] = useState(false)
   const [quizEnded, setQuizEnded] = useState(false)
   const [leaderboard, setLeaderboard] = useState<any[]>([])
+  const [joinPending, setJoinPending] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -55,39 +58,95 @@ export default function PlayerView() {
 
     newSocket.on('players:list', () => {
       setConnected(true)
+      setJoinPending(false)
       toast({
         title: 'Connected',
         description: 'Successfully joined the quiz room',
       })
     })
 
-    newSocket.on('quiz:started', (data: { totalQuestions: number }) => {
+    newSocket.on('player:join:pending', (data: { message: string }) => {
+      setJoinPending(true)
+      setConnected(false)
+      toast({
+        title: 'Waiting for Approval',
+        description: data.message,
+        duration: 5000,
+      })
+    })
+
+    newSocket.on('player:join:approved', (data: { message: string }) => {
+      setJoinPending(false)
+      toast({
+        title: 'Join Approved!',
+        description: data.message,
+      })
+    })
+
+    newSocket.on('player:join:denied', (data: { message: string }) => {
+      setJoinPending(false)
+      toast({
+        title: 'Join Denied',
+        description: data.message,
+        variant: 'destructive',
+      })
+      setTimeout(() => {
+        navigate('/')
+      }, 2000)
+    })
+
+    newSocket.on('error', (data: { message: string }) => {
+      toast({
+        title: 'Join Failed',
+        description: data.message || 'Failed to join the quiz room',
+        variant: 'destructive',
+      })
+      // navigate back to home after showing error
+      setTimeout(() => {
+        navigate('/')
+      }, 2000)
+    })
+
+    newSocket.on('quiz:started', (data: { totalQuestions: number; lateJoiner?: boolean }) => {
       setQuizStarted(true)
       setTotalQuestions(data.totalQuestions)
+      if (data.lateJoiner) {
+        toast({
+          title: 'Joined Quiz in Progress',
+          description: 'You joined the quiz mid-session. You can still answer remaining questions!',
+        })
+      }
+    })
+
+    // listen for server timer updates to keep all players synchronized
+    newSocket.on('timer:update', (data: { remaining: number; elapsed: number }) => {
+      setTimeLeft(data.remaining)
     })
 
     newSocket.on('question:show', (data: {
       question: Question
       questionIndex: number
       totalQuestions: number
+      lateJoiner?: boolean
+      startTime?: number
     }) => {
       setCurrentQuestion(data.question)
       setQuestionIndex(data.questionIndex)
       setTotalQuestions(data.totalQuestions)
       setSelectedOption(null)
       setAnswerResult(null)
-      setTimeLeft(data.question.timeLimit)
-
-      // Countdown timer
-      const timer = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer)
-            return 0
-          }
-          return prev - 1
-        })
-      }, 1000)
+      
+      // use server startTime if provided for initial sync, otherwise use full time limit
+      // the server will send timer:update events to keep us synchronized
+      if (data.startTime) {
+        // calculate initial remaining time based on server timestamp
+        const elapsed = Math.floor((Date.now() - data.startTime) / 1000)
+        const remaining = Math.max(0, data.question.timeLimit - elapsed)
+        setTimeLeft(remaining)
+      } else {
+        // fallback to full time limit (shouldn't happen with new code)
+        setTimeLeft(data.question.timeLimit)
+      }
     })
 
     newSocket.on('answer:result', (data: { isCorrect: boolean; correctOptionId: number }) => {
@@ -179,6 +238,23 @@ export default function PlayerView() {
     return baseClasses
   }
 
+  if (joinPending) {
+    return (
+      <div className="flex-1 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center p-8">
+        <Card className="bg-white/95 backdrop-blur">
+          <CardContent className="p-8 space-y-4 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+            <p className="text-xl font-semibold">Waiting for Host Approval</p>
+            <p className="text-gray-600">The host needs to approve your request to join this active quiz session.</p>
+            <Button variant="outline" onClick={() => navigate('/')}>
+              ← Back to Home
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   if (!connected) {
     return (
       <div className="flex-1 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center p-8">
@@ -199,12 +275,26 @@ export default function PlayerView() {
       <div className="flex-1 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 flex items-center justify-center p-8">
         <Card className="bg-white/95 backdrop-blur max-w-2xl w-full">
           <CardHeader>
-            <CardTitle className="text-3xl">Waiting for Quiz to Start</CardTitle>
-            <CardDescription>Room Code: {roomId}</CardDescription>
+            <CardTitle className="text-3xl">Waiting for Players to Join</CardTitle>
+            {user && (
+              <CardDescription className="text-lg font-semibold">Room Code: {roomId}</CardDescription>
+            )}
+            {!user && (
+              <CardDescription>Please wait while the host begins the quiz session</CardDescription>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-lg">Hello, {playerName}! The host will start the quiz soon.</p>
-            <p className="text-lg">Your Score: {score} points</p>
+            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <p className="text-lg font-medium text-blue-900">
+                Hello, <span className="font-bold">{playerName}</span>! 
+              </p>
+              <p className="text-sm text-blue-700 mt-2">
+                You've successfully joined the room. The host will begin the quiz session shortly.
+              </p>
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <p className="text-sm text-gray-600">Your Score: <span className="font-bold">{score} points</span></p>
+            </div>
             <Button variant="outline" onClick={handleQuit} className="w-full">
               <LogOut className="h-4 w-4 mr-2" />
               Quit Quiz

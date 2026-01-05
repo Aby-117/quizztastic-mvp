@@ -5,6 +5,8 @@ import { createServer } from 'http'
 import { Server } from 'socket.io'
 import quizRoutes from './routes/quiz'
 import roomRoutes from './routes/room'
+import authRoutes from './routes/auth'
+import analyticsRoutes from './routes/analytics'
 import { setupSocketIO } from './socket'
 import { initDB } from './db'
 
@@ -23,8 +25,10 @@ app.use(cors())
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
+app.use('/api/auth', authRoutes)
 app.use('/api/quiz', quizRoutes)
 app.use('/api/room', roomRoutes)
+app.use('/api/analytics', analyticsRoutes)
 
 setupSocketIO(io)
 

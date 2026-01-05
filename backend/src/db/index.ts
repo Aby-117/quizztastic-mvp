@@ -28,6 +28,8 @@ export const initDB = async () => {
         title VARCHAR(255) NOT NULL,
         description TEXT,
         image_url TEXT,
+        is_public BOOLEAN DEFAULT TRUE,
+        created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `)
@@ -41,6 +43,28 @@ export const initDB = async () => {
       // Column might already exist, which is fine
       if (!error.message?.includes('already exists')) {
         console.warn('Could not add image_url column to quizzes:', error.message)
+      }
+    }
+
+    // Add is_public column if it doesn't exist (for existing databases)
+    try {
+      await query(`
+        ALTER TABLE quizzes ADD COLUMN is_public BOOLEAN DEFAULT TRUE
+      `)
+    } catch (error: any) {
+      if (!error.message?.includes('already exists')) {
+        console.warn('Could not add is_public column to quizzes:', error.message)
+      }
+    }
+
+    // Add created_by column if it doesn't exist (for existing databases)
+    try {
+      await query(`
+        ALTER TABLE quizzes ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE CASCADE
+      `)
+    } catch (error: any) {
+      if (!error.message?.includes('already exists')) {
+        console.warn('Could not add created_by column to quizzes:', error.message)
       }
     }
 
@@ -116,6 +140,55 @@ export const initDB = async () => {
         answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    // Create quiz_sessions table
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS quiz_sessions (
+          id SERIAL PRIMARY KEY,
+          room_id VARCHAR(255) REFERENCES rooms(id) ON DELETE SET NULL,
+          quiz_id INTEGER REFERENCES quizzes(id) ON DELETE CASCADE,
+          host_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          total_players INTEGER DEFAULT 0,
+          started_at TIMESTAMP,
+          ended_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+    } catch (error: any) {
+      if (!error.message?.includes('already exists')) {
+        console.warn('Could not create quiz_sessions table:', error.message)
+      }
+    }
+
+    // Create session_leaderboards table
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS session_leaderboards (
+          id SERIAL PRIMARY KEY,
+          session_id INTEGER REFERENCES quiz_sessions(id) ON DELETE CASCADE,
+          player_name VARCHAR(255) NOT NULL,
+          score INTEGER DEFAULT 0,
+          rank INTEGER NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+    } catch (error: any) {
+      if (!error.message?.includes('already exists')) {
+        console.warn('Could not create session_leaderboards table:', error.message)
+      }
+    }
 
     console.log('Database initialized successfully')
   } catch (error) {

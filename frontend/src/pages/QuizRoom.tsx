@@ -30,12 +30,14 @@ export default function QuizRoom() {
   const [questionIndex, setQuestionIndex] = useState(0)
   const [totalQuestions, setTotalQuestions] = useState(0)
   const [quizStarted, setQuizStarted] = useState(false)
+  const [waitingForPlayers, setWaitingForPlayers] = useState(false)
   const [showAnswer, setShowAnswer] = useState(false)
   const [correctOptionId, setCorrectOptionId] = useState<number | null>(null)
   const [statistics, setStatistics] = useState<any[]>([])
   const [leaderboard, setLeaderboard] = useState<Player[]>([])
   const [quizEnded, setQuizEnded] = useState(false)
   const [quizImage, setQuizImage] = useState<string | null>(null)
+  const [pendingJoinRequests, setPendingJoinRequests] = useState<Array<{ requestId: string; playerName: string; roomId: string }>>([])
   const { toast } = useToast()
 
   useEffect(() => {
@@ -107,6 +109,20 @@ export default function QuizRoom() {
       setCurrentQuestion(null)
     })
 
+    newSocket.on('quiz:started', () => {
+      setQuizStarted(true)
+      setWaitingForPlayers(false)
+    })
+
+    newSocket.on('player:join:request', (data: { requestId: string; playerName: string; roomId: string }) => {
+      setPendingJoinRequests((prev) => [...prev, data])
+      toast({
+        title: 'Join Request',
+        description: `${data.playerName} wants to join the quiz`,
+        duration: 10000, // Show for 10 seconds
+      })
+    })
+
     return () => {
       console.log('Cleaning up socket connection')
       newSocket.off('host:joined')
@@ -120,10 +136,43 @@ export default function QuizRoom() {
     }
   }, [roomId, toast])
 
-  const handleStartQuiz = () => {
+  const handleOpenRoom = () => {
+    if (socket && roomId) {
+      socket.emit('room:open', { roomId })
+      setWaitingForPlayers(true)
+      toast({
+        title: 'Room Opened',
+        description: 'Players can now join. Click "Begin Quiz" when ready to start.',
+      })
+    }
+  }
+
+  const handleBeginQuiz = () => {
     if (socket && roomId) {
       socket.emit('quiz:start', { roomId })
-      setQuizStarted(true)
+    }
+  }
+
+  const handleApproveJoin = (requestId: string) => {
+    if (socket) {
+      socket.emit('player:join:response', { requestId, approved: true })
+      setPendingJoinRequests((prev) => prev.filter((req) => req.requestId !== requestId))
+      toast({
+        title: 'Join Approved',
+        description: 'Player has been allowed to join',
+      })
+    }
+  }
+
+  const handleDenyJoin = (requestId: string) => {
+    if (socket) {
+      socket.emit('player:join:response', { requestId, approved: false })
+      setPendingJoinRequests((prev) => prev.filter((req) => req.requestId !== requestId))
+      toast({
+        title: 'Join Denied',
+        description: 'Player join request was denied',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -193,22 +242,56 @@ export default function QuizRoom() {
         <div className="grid md:grid-cols-3 gap-6">
           {/* Main Content */}
           <div className="md:col-span-2">
-            {!quizStarted && !quizEnded && (
+            {!waitingForPlayers && !quizStarted && !quizEnded && (
               <Card className="bg-white/95 backdrop-blur">
                 <CardHeader>
                   <CardTitle>Waiting to Start</CardTitle>
                   <CardDescription>
                     <div className="mt-2">
                       <span className="text-xl font-bold">Room Code: {roomId}</span>
-                      <p className="text-sm mt-1">Players can join using this code</p>
+                      <p className="text-sm mt-1">Click "Start Quiz" to open the room for players to join</p>
                     </div>
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Button onClick={handleStartQuiz} className="w-full text-lg h-12" size="lg">
+                  <Button onClick={handleOpenRoom} className="w-full text-lg h-12" size="lg">
                     <Play className="h-5 w-5 mr-2" />
                     Start Quiz
                   </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {waitingForPlayers && !quizStarted && !quizEnded && (
+              <Card className="bg-white/95 backdrop-blur">
+                <CardHeader>
+                  <CardTitle className="text-2xl">Waiting for Players to Join</CardTitle>
+                  <CardDescription>
+                    <p className="text-sm mt-2 text-green-600 font-medium">
+                      Click "Begin Quiz" when ready to start the session.
+                    </p>
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="text-sm text-blue-800">
+                      <strong>{players.length}</strong> {players.length === 1 ? 'player has' : 'players have'} joined
+                    </p>
+                  </div>
+                  <Button 
+                    onClick={handleBeginQuiz} 
+                    className="w-full text-lg h-12 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed" 
+                    size="lg"
+                    disabled={players.length === 0}
+                  >
+                    <Play className="h-5 w-5 mr-2" />
+                    Begin Quiz
+                  </Button>
+                  {players.length === 0 && (
+                    <p className="text-xs text-center text-muted-foreground mt-2">
+                      Wait for at least one player to join before starting the quiz
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -298,6 +381,47 @@ export default function QuizRoom() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* Pending Join Requests */}
+            {pendingJoinRequests.length > 0 && (
+              <Card className="bg-yellow-50 border-2 border-yellow-300 backdrop-blur">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-yellow-800">
+                    <Users className="h-5 w-5" />
+                    Join Requests ({pendingJoinRequests.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {pendingJoinRequests.map((request) => (
+                      <div
+                        key={request.requestId}
+                        className="p-3 bg-white rounded-lg border border-yellow-200"
+                      >
+                        <p className="font-semibold text-sm mb-2">{request.playerName} wants to join</p>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleApproveJoin(request.requestId)}
+                            className="flex-1 bg-green-600 hover:bg-green-700"
+                          >
+                            Allow
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => handleDenyJoin(request.requestId)}
+                            className="flex-1"
+                          >
+                            Deny
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <Card className="bg-white/95 backdrop-blur">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

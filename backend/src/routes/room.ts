@@ -1,24 +1,28 @@
 import express from 'express'
 import { query } from '../db'
 import { v4 as uuidv4 } from 'uuid'
+import { authenticate, AuthRequest } from '../middleware/auth'
 
 const router = express.Router()
 
-// Create room
-router.post('/', async (req, res) => {
+// create room endpoint - when user wants to start hosting a quiz
+router.post('/', authenticate, async (req: AuthRequest, res) => {
   try {
-    const { quizId, hostId } = req.body
+    const { quizId } = req.body
+    // get the user id from jwt token and convert to string (room table stores it as varchar)
+    const hostId = req.user!.id.toString()
     
-    // Check if there's an existing active room for this quiz
+    // check if there's already an active room for this quiz
+    // if someone else is hosting it, we can reuse that room
     const existingRoom = await query(
       'SELECT * FROM rooms WHERE quiz_id = $1 AND is_active = TRUE ORDER BY created_at DESC LIMIT 1',
       [quizId]
     )
 
     if (existingRoom.rows.length > 0) {
-      // Return existing active room
+      // return the existing room instead of creating a new one
       const room = existingRoom.rows[0]
-      // Update host_id in case it's a different host
+      // update the host_id in case a different person is now hosting
       await query(
         'UPDATE rooms SET host_id = $1 WHERE id = $2',
         [hostId, room.id]
@@ -27,26 +31,29 @@ router.post('/', async (req, res) => {
       return
     }
 
-    // Generate a unique room ID (6 characters)
+    // generate a unique 6 character room code using uuid
     let roomId = uuidv4().substring(0, 6).toUpperCase()
     let attempts = 0
     const maxAttempts = 10
 
-    // Ensure room ID is unique
+    // make sure the room id is unique - keep trying if it already exists
     while (attempts < maxAttempts) {
       const existing = await query('SELECT id FROM rooms WHERE id = $1', [roomId])
       if (existing.rows.length === 0) {
         break
       }
+      // generate a new one if this one is taken
       roomId = uuidv4().substring(0, 6).toUpperCase()
       attempts++
     }
 
+    // insert the new room into database
     const result = await query(
       'INSERT INTO rooms (id, quiz_id, host_id) VALUES ($1, $2, $3) RETURNING *',
       [roomId, quizId, hostId]
     )
 
+    // return the room data including the room code
     res.json(result.rows[0])
   } catch (error) {
     console.error(error)
